@@ -2,34 +2,30 @@
 
 addpath('~/Documents/matlab/toolbox/fieldtrip'); % https://github.com/fieldtrip/fieldtrip
 ft_defaults
-
-addpath('helpers/') % add helper scripts
+addpath('../helpers/') % add helper scripts
 
 % Filenames for raw datasets
 
-raw_dir   = '~/Dropbox (University of Michigan)/raw-data/alice-eeg';
+raw_dir   = 'path/to/raw/data/directory';
 raw_files = dir([raw_dir '/*.eeg']);
 raw_files = {raw_files.name};
 
 % Filenames for processing parameters (OPTIONAL)
 
-proc_dir   = '~/Dropbox (University of Michigan)/processed-data/alice-eeg/timelock-preprocessing';
+proc_dir   = 'path/to/preprocessing/directory';
 proc_files = dir([proc_dir '/*.mat']);
 proc_files = {proc_files.name};
-%% 
 
 % Destination for processed data
 
-%dest_dir = '~/Dropbox (University of Michigan)/processed-data/alice-eeg/timelock-data';
-dest_dir = '~/Desktop/alice-testing';
+dest_dir = 'path/to/directory/to/save/preprocessed/data';
 
 %% Run single-subject analysis
 % If running from scratch, loop over raw_files
 % If reproducing original analysis, loop over proc_files (excludes data
 % deemed too noisy to process)
 
-%for f = 1:length(proc_files)
-for f = 28
+for f = 1:length(proc_files)
     [path name ext] = fileparts(proc_files{f});
     dataset = [raw_dir '/' name '.eeg']; % points to raw data
     load([proc_dir '/' name ext]);       % OPTIONAL: loads proc object with preprocessing parameters
