@@ -1,6 +1,6 @@
 %% Run preprocessing for Alice EEG datasets
 
-addpath('~/Documents/matlab/toolbox/fieldtrip'); % https://github.com/fieldtrip/fieldtrip
+addpath('path/to/fieldtrip/toolbox'); % https://github.com/fieldtrip/fieldtrip
 ft_defaults
 addpath('../helpers/') % add helper scripts
 
