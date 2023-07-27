@@ -4,10 +4,7 @@ Preprocessing and analyses for EEG data collected while participants listened to
 
 ### Getting started
 
-Raw data files available at <https://doi.org/10.7302/Z29C6VNH>
-
-Data preprocessing requires MATLAB. 
-Group statistical analyses require MATLAB, R, and STAN
+Raw data files are available at <https://doi.org/10.7302/Z29C6VNH>
 
 1. Download the data (`S01.eeg` `S01.vhdr` `S01.vmrk` etc.) and place into a local directory
 2. Download prePROCessing parameters (`proc.zip`) and unzip into a local directory
@@ -17,9 +14,9 @@ Group statistical analyses require MATLAB, R, and STAN
 
 EEG data were collected from March 2015 to December 2016 at the University of Michigan [Computational Neurolinguistics lab](http://sites.lsa.umich.edu/cnllab). Signals were recorded from 61 actively amplified electrodes in a equidistant layout (easycap M10), filtered  between 0.01 and 200 Hz and digitized at 500 Hz with a actiCHamp amplifier. A bipolar vertical EOG over the left eye (`VEOG`) was also collected along with a digitized copy of the acoustic input (`AUD`). 
 
-Adult participants listened to 12 m audiobook recording of *Alice in Wonderland*, chapter 1 over insert earphones (Etymotic EA-2) at a loudness of 45 dB above individually-determined hearing threshold. The audio file was divied into 12 segments and a digital trigger was sent at the onset of each segment. The audio stimulus is available with the raw data as `audio.zip`
+Adult participants listened to a 12 m audiobook recording of *Alice in Wonderland*, chapter 1 over insert earphones (Etymotic EA-2) at a loudness of 45 dB above individually-determined hearing threshold. The audio file was divied into 12 segments and a digital trigger was sent at the onset of each segment. The audio stimulus is available with the raw data as `audio.zip`
 
-Full details of materials, participants, and data collection procedures can be found at:
+Full details on the materials, participants, and data collection procedures can be found at:
 
 > Brennan, J. R., & Hale, J. T. (2019). Hierarchical structure guides rapid linguistic predictions during naturalistic listening. PLoS ONE, 14(1), e0207741. <https://doi.org/10.1371/journal.pone.0207741>
 
@@ -30,24 +27,25 @@ and
 
 ### Data Analyses
 
-#### Preprocessing
+#### `preprocessing`
 
 Several published analyses use the same preprocessed data files. The pipeline is described in detail at <https://doi.org/10.1371/journal.pone.0207741> (citation above). 
 
-Data processing was was originally conducted with MATLAB 2017a and Fieldtrip mid-2017. The analysis was last tested with MATLAB 2022a and [Fieldtrip 3be5222fc](https://github.com/fieldtrip/fieldtrip/commit/3be5222fc8d8ed28df9b1200fe2ebe22733c0c4b) (2023-05-03)
+[How to run](preprocessing/README.md)
 
-#### PLoS One (published 2019)
+#### `surprisal-plosone-2019`
 
-Group analysis testing effects of structure on EEG signatures of predictabilty predictability presented in <https://doi.org/10.1371/journal.pone.0207741> (citation above)
+Analysis testing effects of structure on EEG signatures of predictabilty predictability published in <https://doi.org/10.1371/journal.pone.0207741> (citation above)
 
-Data processing was was originally conducted with MATLAB 2017a, Fieldtrip mid-2017, R 3.4.4, brms 2.1.0 and rstan 2.21.7. The analysis was last tested with MATLAB 2022am, [Fieldtrip 3be5222fc](https://github.com/fieldtrip/fieldtrip/commit/3be5222fc8d8ed28df9b1200fe2ebe22733c0c4b) (2023-05-03), R 4.2.0, brms 2.17.9, and rstan 2.21.7
-
+[How to run](surprisal-plosone-2019/README.md)
 
 #### Proc ACL (published 2018)
 
+Analysis testing the effect of syntactic representations on EEG signals using Recurrent Neural Network Grammars
+
 > Hale, J., Dyer, C., Kuncoro, A., & Brennan, J. (2018). Finding syntax in human encephalography with beam search. Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), 2727–2736. <https://doi.org/10/ggbzgt>
 
-to be added
+[How to run](rnng-acl-2018/README.md)
 
 #### EMNLP 2019
 
