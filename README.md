@@ -49,10 +49,11 @@ Analysis testing the effect of syntactic representations on EEG signals using Re
 
 #### EMNLP 2019
 
+Analysis testing the effect of training data genre and amount on the fit between RNNG estimates of predictability and EEG signals
+
 > Hale, J. T., Kuncoro, A., Hall, K. B., Dyer, C., & Brennan, J. R. (2019). Text genre and training data size in human-like parsing. Proceedings of EMNLP 2019. <https://doi.org/10/gmcgn3>
 
-
-to be added
+[How to run](training-emnlp-2019/README.md)
 
 ### Phil Trans Royal Soc B (2020)
 
