@@ -1,0 +1,516 @@
+---
+title: "Effect of training on RNNG+EEG"
+author: "Jonathan R. Brennan"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+---
+
+Analysis originally run in June 2019; last updated in July 2023 with R version 4.2.0, brms 2.17.9, rstan 2.21.7     
+
+```{r setup, include=FALSE}
+setwd("path/to/this/analysis/")
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# Last tested package version shown
+
+library(gdata) # for read.xls # gdata_2.19.0
+library(brms) # brms_2.17.0
+library(loo) # loo_2.5.1
+library(ggplot2) # ggplot2_3.4.1
+library(cowplot) # for plot_grid() # cowplot_1.1.1
+library(scales) # for nice handling of big numbers # scales_1.2.1
+library(additivityTests) # for tukey.test # additivityTests_1.1-4.1
+
+options(mc.cores = 4)
+# or
+##options(mc.cores = parallel::detectCores())
+
+## Flag for re-doing brm() models
+redo.brm.fits <- TRUE
+
+```
+
+## Introduction
+
+Tests how the choice of training data affects the fit between complexity metrics derived from a RNNG and EEG signals recorded from the *Alice in Wonderland* EEG dataset.
+
+See for background:
+
+> Hale, J., Dyer, C., Kuncoro, A., & Brennan, J. (2018). Finding syntax in human encephalography with beam search. Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), 2727–2736. https://doi.org/10/ggbzgt
+
+In that analysis the RNNG is trained on Ch. 2-12 of *Alice in Wonderland* while the data come from Ch. 1 of that book. The motivation in choosing that training set was to use text that was as within-genre as possible. Here we probe that choice and also evaluate the effect of training data amount.
+
+"Same genre" is operationalized as fiction from Project Gutenberg that is ranked as "most similar" according to lexical overlap. "Different genre" is operationalized as newspaper text taken from the Gigaword corpus. Both corpora are parsed with the SAFT parser.
+
+There are 2 training genres and 7 sizes, so 14 models:
+
+Two Genres:
+
+1. `gigaword-materials` - newspaper/out-of-genre training
+2. `top365-materials` - storybook/within-genre materials
+
+Seven amounts of training data (in number of training sentences):
+
+1. `39k`
+2. `100k`
+3. `250k`
+4. `500k`
+5. `750k`
+6. `1 m`
+7. `1.4m`
+
+
+```{r}
+
+genre = c('gigaword-materials', 'top365-materials')
+size = c('39k', '100k', '250k', '500k', '750k', '1m', '1point4m')
+
+# replace 'size' with numbers
+
+size.to.num <- function(dat) {
+  dat$size  <- gsub('39k',      39000,   dat$size)
+  dat$size  <- gsub('100k',     100000,  dat$size)
+  dat$size  <- gsub('250k',     250000,  dat$size)
+  dat$size  <- gsub('500k',     500000,  dat$size)
+  dat$size  <- gsub('750k',     750000,  dat$size)
+  dat$size  <- gsub('1m',       1000000, dat$size)
+  dat$size  <- gsub('1point4m', 1400000, dat$size)
+  dat$size  <- as.numeric(dat$size)
+  return(dat)
+}
+
+```
+
+## Load the predictors
+
+Load EEG data (prepared with `run-eeg-export.m`) and control predictors. 
+
+```{r}
+eeg <- read.csv('forR-rnng-training-roi.csv')
+# summary erp
+
+# center & scale predictors
+eeg$LogFreq      <- scale(eeg$LogFreq, scale=FALSE, center=TRUE)
+eeg$LogFreq_Prev <- scale(eeg$LogFreq_Prev, scale=FALSE, center=TRUE)
+eeg$LogFreq_Next <- scale(eeg$LogFreq_Next, scale=FALSE, center=TRUE)
+eeg$SndPower     <- scale(eeg$SndPower, scale=FALSE, center=TRUE)
+eeg$SndPower     <- eeg$SndPower * 100 # scale sndpwr * 100
+eeg$Position     <- scale(eeg$Position, scale=FALSE, center=TRUE)
+eeg$Position     <- eeg$Position / 10 # scale Position by /10
+eeg$Sentence     <- scale(eeg$Sentence, scale=FALSE, center=TRUE)
+eeg$Sentence     <- eeg$Sentence / 10 # scale Sentence / 10
+
+# subset to just content-word epochs
+lex <- subset(eeg, IsLexical == 1)
+
+# setup for brm fits
+if (!redo.brm.fits) { load('training-results.rData') }
+
+my_priors = set_prior("student_t(10,0,3)", class = 'b') 
+#   Weakly informative; scale is microvolts, effect sizes are <= 1)
+#   see https://github.com/stan-dev/stan/wiki/Prior-Choice-Recommendations
+
+```
+
+## ANT region of interest and SURPRISAL 
+
+fit the models
+
+(NB: ~1-2 min per model on 2021 macbook pro)
+
+```{r surp-models}
+
+s.models <- list()
+for (g in seq_along(genre)) {
+  s.models[[g]] <- list()
+  for (s in seq_along(size)) {
+    filename = paste( 'rnng-predictors/', genre[g], 
+                      '/parsing-logs/', size[s], 
+                      '-order-word-k20dist-k20surp.csv', 
+                      sep='')
+    logs <- read.csv(filename)
+    # center but but do not scale
+    logs$surprisal <- scale(logs$surprisal, scale=FALSE, center=TRUE)
+    combo <- merge(lex, logs, by='Order')
+    
+    # fit models!!
+    if (redo.brm.fits) {
+      mod <- brm(ANT ~ Position + Sentence + SndPower +
+                         LogFreq + LogFreq_Prev + LogFreq_Next + 
+                         surprisal + (1|subject),
+                 data = combo,
+                 prior = my_priors)
+      s.models[[g]][[s]] <- mod
+    } else {
+      mod <- s.models[[g]][[s]]
+    }
+    rm('logs', 'combo', 'mod')
+  }
+}
+cat('Done with model fits.\n')
+```
+
+Summarize all the fits
+
+```{r}
+s.output <- data.frame(matrix(ncol=5, nrow=length(genre)*length(size)))
+colnames(s.output) <- c('genre', 'size', 'gof', 'goferr', 'maxRhat')
+i = 1 # index output row
+for (g in seq_along(genre)) {
+  cat('Summarizing fits for', genre[g], '...')
+  for (s in seq_along(size)) {
+    cat(size[s])
+    gof  <- WAIC(s.models[[g]][[s]])
+    rhat <- rhat(s.models[[g]][[s]])
+    s.output$gof[i]     <- gof$estimates['waic', 'Estimate']
+    s.output$goferr[i]  <- gof$estimates['waic', 'SE']
+    s.output$genre[i]   <- genre[g]
+    s.output$size[i]    <- size[s]
+    s.output$maxRhat[i] <- max(rhat)
+    i = i + 1 # track output row
+  }
+  cat('\n')
+}
+cat('Done with model GOF summary.\n')
+print(s.output)
+```
+
+Run model comparisons and summarize
+
+```{r}
+s.comparisons = as.data.frame(matrix(nrow =  length(size), ncol=3))
+names(s.comparisons) <- c('size', 'elpd_diff', 'se_diff')
+for (i in seq_along(size)) {
+  cat('Comparing models for', size[i], '...\n')
+  g1 <- waic(s.models[[1]][[i]])
+  g2 <- waic(s.models[[2]][[i]])
+  cmp <- loo_compare(g1, g2)
+  diff <- g1[['estimates']]['waic','Estimate'] - g2[['estimates']]['waic','Estimate']
+  s.comparisons$size[i]      <- size[i] 
+  s.comparisons$elpd_diff[i] <- cmp[2,1] * sign(diff) # flip sign if g2 > g1
+  s.comparisons$se_diff[i]   <- cmp[2,2]
+}
+cat('Done with model comparison.\n')
+print(s.comparisons)
+```
+
+Plot model GOF and comparisons
+
+```{r surp-plots, fig.height=3, fig.width=3}
+## Plot WAIC
+s.output       <- size.to.num(s.output)
+s.output$genre <- factor(s.output$genre, labels=c('newspaper', 'alice-like'))
+
+# per-model GOD
+s.plot <- ggplot(data=s.output, aes(y=gof, x = size, linetype=genre, group=genre)) +
+      #ggtitle('Surprisal ~ ANT', subtitle = 'Lower WAIC score indicates better fit' ) +
+      geom_line(size=1) + geom_point(size=2, shape=21, fill='white') + 
+      ylab('WAIC') +
+      xlab('') +
+      ylim(c(153226, 153247)) +
+      annotate(geom='text', label='Newspaper', x=1250000, y = 153242) +
+      annotate(geom='text', label='Alice-like', x=1150000, y = 153231) +
+      #geom_errorbar(aes(ymin = gof - goferr, ymax=gof+goferr)) +
+      theme_classic() + theme(
+        legend.position='none', 
+        legend.title = element_blank(),
+        axis.line.x = element_blank(), 
+        axis.text.x = element_blank()
+        )
+      
+# model comparison as delta_ELPD
+s.fitplot <- ggplot(size.to.num(s.comparisons), aes(x=size, y = elpd_diff)) + 
+  geom_line(size=1) + 
+  geom_errorbar(aes(ymin=elpd_diff-se_diff, ymax=elpd_diff+se_diff)) +
+  geom_point(size=2, shape=21, fill='white') + 
+  geom_hline(yintercept=0) +
+  ylab(expression(paste(Delta, WAIC))) +
+  ylim(c(-12, 5)) +
+  scale_x_continuous('sentences', labels = comma) +
+  theme_classic() 
+  
+# Combine plots
+plot_grid(s.plot, s.fitplot, align='v', nrow=2, rel_heights = c(2/3, 1/3))      
+ggsave('figs/surprisal-ant.pdf', width=4, height=4)
+```
+
+## Comparing LSTM and RNNG surprisals
+
+Both trained on *Alice-like* text...
+
+```{r}
+
+l.models <- list()
+for (s in seq_along(size)) {
+  filename = paste( 'lstm-predictors/lstm_', size[s], 
+                    '—order-word-surprisal.csv', 
+                    sep='')
+  logs <- read.csv(filename)
+  # center but DO NOT SCALE
+  logs$surprisal <- scale(logs$distance, scale=FALSE, center=TRUE)
+  combo <- merge(lex, logs, by='Order')
+  
+  # fit models!!
+  if (redo.brm.fits) {
+    mod <- brm(ANT ~ Position + Sentence + SndPower +
+                       LogFreq + LogFreq_Prev + LogFreq_Next + 
+                       surprisal + (1|subject),
+                data = combo,
+                prior = my_priors)
+    l.models[[s]] <- mod
+  } else {
+    mod <- l.models[[s]]
+  }
+  rm('logs', 'combo', 'mod')
+}
+
+cat('Finished fitting LSTM models.\n')
+```
+
+Summarize LSTM fits
+
+```{r}
+
+l.output <- data.frame(matrix(ncol=5, nrow=length(genre)*length(size)))
+colnames(l.output) <- c('genre', 'size', 'gof', 'goferr', 'maxRhat')
+i = 1 # index output row
+cat('Summarizing LSTM GOF... ')
+for (s in seq_along(size)) {
+  cat(size[s], '')
+    gof <- WAIC(l.models[[s]])
+    rhat <- rhat(l.models[[s]])
+    l.output$gof[i]    <- gof$estimates['waic', 'Estimate']
+    l.output$goferr[i] <- gof$estimates['waic', 'SE']
+    l.output$genre[i]  <- genre[g]
+    l.output$size[i]   <- size[s]
+    l.output$maxRhat[i] <- max(rhat)
+    i = i + 1 # track output row
+}
+cat('\n Finished LSTM summary.\n')
+
+# add RNNG+Alice surprisal to l.output
+l.output[8:14,] <- s.output[8:14,]
+l.output$genre[1:7]  <- 'lstm'
+l.output$genre[8:14] <- 'rnng'
+
+print(l.output)
+```
+
+Model comparisons: RNNG+Alice surprisal vs. LSTM+Alice surprisals
+
+```{r}
+
+l.comparisons = as.data.frame(matrix(nrow =  length(size), ncol=3))
+names(l.comparisons) <- c('size', 'elpd_diff', 'se_diff')
+cat('Summarizing LSTM/RNNG model comparison... ')
+for (i in seq_along(size)) {
+  cat(size[i], '')
+  g1 <- waic(s.models[[2]][[i]])
+  g2 <- waic(l.models[[i]])
+  cmp <- loo_compare(g1, g2)
+  diff <- g2[['estimates']]['waic','Estimate'] - g1[['estimates']]['waic','Estimate']
+  l.comparisons$size[i]      <- size[i] 
+  l.comparisons$elpd_diff[i] <- cmp[2,1] * sign(diff)# flip  sign if g1 > g2
+  l.comparisons$se_diff[i]   <- cmp[2,2]
+}
+cat('Finished model comparison.')
+print(l.comparisons)
+```
+
+Plot RNNG vs LSTM comparisons
+
+```{r lstm-plots, fig.height=3, fig.width=3}
+
+l.output         <- size.to.num(l.output)
+l.output$genre   <-factor(l.output$genre, labels=c('lstm', 'rnng'))
+
+l.plot <- ggplot(data=l.output, aes(y=gof, x = size, linetype=genre, group=genre)) +
+      #ggtitle('LSTM vs. RNNG Surprisal ~ ANT', subtitle = 'Lower WAIC score indicates better fit' ) +
+      geom_line(size=1) + geom_point(size=2, shape=21, fill='white') + 
+      ylab('WAIC') +
+      xlab('') +
+      ylim(c(153225, 153245)) +
+      annotate(geom='text', label='LSTM', x=700000, y = 153240) +
+      annotate(geom='text', label='RNNG', x=510000, y = 153233) +
+      #geom_errorbar(aes(ymin = gof - goferr, ymax=gof+goferr)) +
+      theme_classic() + theme(
+        legend.position='none', 
+        legend.title = element_blank(),
+        axis.line.x = element_blank(), 
+        axis.text.x = element_blank()
+        )
+      
+# make the gof plot
+l.fitplot <- ggplot(size.to.num(l.comparisons), aes(x=size, y = elpd_diff)) + 
+  geom_line(size=1) + 
+  geom_errorbar(aes(ymin=elpd_diff-se_diff, ymax=elpd_diff+se_diff)) +
+  geom_point(size=2, shape=21, fill='white') + 
+  geom_hline(yintercept=0) +
+  ylab(expression(paste(Delta, WAIC))) +
+  ylim(c(-6, 6)) +
+  scale_x_continuous('sentences', labels = comma) +
+  theme_classic() 
+  
+plot_grid(l.plot, l.fitplot, align='v', nrow=2, rel_heights = c(2/3, 1/3))      
+ggsave('figs/lstm-vs-rnng-surprisal-ant.pdf', width=4, height=4)
+```
+
+## Stats
+
+Use Tukey's test of additivity to evaluate the interaction between training size and genre.
+
+```{r, fit.tests}
+# genre x size for RNNG Surprisal
+s.matrix <- cbind(s.output$gof[1:7], s.output$gof[8:14])
+(s.test <- tukey.test(s.matrix)) # 
+#   returns a value that is F-distributed with df1 = 1 and df2 = (m*n - (m+n))
+#   we have 7 rows and 2 columns so df2 = 7*2 - (7+2) = 5
+df(s.test$stat, 1, 5) # p-value
+
+# model x size for RNNG vs. LSTM
+l.matrix <- cbind(l.output$gof[1:7], l.output$gof[8:14])
+(l.test = tukey.test(l.matrix)) # N.S.
+
+```
+
+## N400 and Surprisal 
+
+Control analysis
+
+```{r n400-models}
+
+n.models <- list()
+for (g in seq_along(genre)) {
+  n.models[[g]] <- list()
+  for (s in seq_along(size)) {
+    filename = paste( 'rnng-predictors/', genre[g], 
+                      '/parsing-logs/', size[s], 
+                      '-order-word-k20dist-k20surp.csv', 
+                      sep='')
+    logs <- read.csv(filename)
+    # center but DO NOT SCALE
+    logs$surprisal <- scale(logs$surprisal, scale=FALSE, center=TRUE)
+    combo <- merge(lex, logs, by='Order')
+    
+    # fit models!!
+    if (redo.brm.fits) {
+      mod <- brm(N400 ~ Position + Sentence + SndPower +
+                         LogFreq + LogFreq_Prev + LogFreq_Next + 
+                         surprisal + (1|subject),
+                 data = combo,
+                 prior = my_priors)
+      n.models[[g]][[s]] <- mod
+    } else {
+      mod <- n.models[[g]][[s]]
+    }
+    rm('logs', 'combo', 'mod')
+  }
+}
+
+cat('Finished fitting N400 models.')
+
+```
+
+Summarize N400 analysis
+
+```{r}
+# pull summaries for plotting
+n.output <- data.frame(matrix(ncol=5, nrow=length(genre)*length(size)))
+colnames(n.output) <- c('genre', 'size', 'gof', 'goferr', 'maxRhat')
+i = 1 # index output row
+for (g in seq_along(genre)) {
+  cat('Summarizing models for', genre[g], '...')
+  for (s in seq_along(size)) {
+    cat(size[s], '')
+    gof <- WAIC(n.models[[g]][[s]])
+    rhat <- rhat(n.models[[g]][[s]])
+    n.output$gof[i]    <- gof$estimates['waic', 'Estimate']
+    n.output$goferr[i] <- gof$estimates['waic', 'SE']
+    n.output$genre[i] <- genre[g]
+    n.output$size[i]  <- size[s]
+    n.output$maxRhat[i] <- max(rhat)
+    i = i + 1 # track output row
+  }
+  cat('\n')
+}
+cat('Done summarizing N400 models.')
+print(n.output)
+```
+
+N400 model comparisons
+
+```{r}
+n.comparisons = as.data.frame(matrix(nrow = length(size), ncol=3))
+names(n.comparisons) <- c('size', 'elpd_diff', 'se_diff')
+cat('Summarizing model comparisons... ')
+for (i in seq_along(size)) {
+  cat(size[i], '')
+  g1 <- waic(n.models[[1]][[i]])
+  g2 <- waic(n.models[[2]][[i]])
+  cmp <- loo_compare(g1, g2)
+  diff <- g1[['estimates']]['waic','Estimate'] - g2[['estimates']]['waic','Estimate']
+  n.comparisons$size[i]      <- size[i] 
+  n.comparisons$elpd_diff[i] <- cmp[2,1] * sign(diff) # flip sign if g2 > g1
+  n.comparisons$se_diff[i]   <- cmp[2,2]
+}
+cat('\nFinished model comparisons')
+print(n.comparisons)
+
+```
+
+Plot N400 analysis
+
+```{r n400-plots, fig.height=3, fig.width=3}
+n.output        <- size.to.num(n.output)
+n.output$genre <-factor(n.output$genre, labels=c('newspaper', 'alice-like'))
+
+
+n.plot <- ggplot(data=n.output, aes(y=gof, x = size, linetype=genre, group=genre)) +
+      #ggtitle('Surprisal ~ ANT', subtitle = 'Lower WAIC score indicates better fit' ) +
+      geom_line(size=1) + geom_point(size=2, shape=21, fill='white') + 
+      ylab('WAIC') +
+      xlab('') +
+      ylim(c(147515, 147535)) +
+    #  annotate(geom='text', label='Newspaper', x=1250000, y = 153242) +
+    #  annotate(geom='text', label='Alice-like', x=1150000, y = 153231) +
+      #geom_errorbar(aes(ymin = gof - goferr, ymax=gof+goferr)) +
+      theme_classic() + theme(
+        legend.position='none', 
+        legend.title = element_blank(),
+        axis.line.x = element_blank(), 
+        axis.text.x = element_blank()
+        )
+      
+# make the gof plot
+n.fitplot <- ggplot(size.to.num(n.comparisons), aes(x=size, y = elpd_diff)) + 
+  geom_line(size=1) + 
+  geom_errorbar(aes(ymin=elpd_diff-se_diff, ymax=elpd_diff+se_diff)) +
+  geom_point(size=2, shape=21, fill='white') + 
+  geom_hline(yintercept=0) +
+  ylab(expression(paste(Delta, WAIC))) +
+  ylim(c(-12, 5)) +
+  scale_x_continuous('sentences', labels = comma) +
+  theme_classic() 
+  
+plot_grid(n.plot, n.fitplot, align='v', nrow=2, rel_heights = c(2/3, 1/3))
+ggsave('figs/surprisal-n400.pdf', width=4, height=4)
+```
+
+## Summary and Wrap-up
+
+- For RNNG At the ANT ROI, Same-genre GOF $$\leq$$ Different-genre GOF at all training amounts
+- For Same-genre training at the ANT ROI, RNNG $$\leq$$ LSTM at all training amounts
+- At the N400 ROI there are no reliable effects of training or genre
+
+```{r}
+
+save(file='training-results.rData', 
+  's.output','l.output', 'n.output', 
+  's.models', 'l.models', 'n.models', 
+  's.comparisons', 'l.comparisons', 'n.comparisons')
+
+```
+
