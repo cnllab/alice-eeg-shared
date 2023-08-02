@@ -12,7 +12,7 @@
 addpath('path/to/fieldtrip/toolbox'); % https://github.com/fieldtrip/fieldtrip
 ft_defaults
 
-addpath('../HELPERS/') % add helper scripts
+addpath('../helpers/') % add helper scripts
 
 load datasets.mat % 
 
