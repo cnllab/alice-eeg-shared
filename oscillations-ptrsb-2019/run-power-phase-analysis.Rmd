@@ -47,8 +47,8 @@ Data are created with `run_power_phase_export_to_R.m` in MATLAB
 
 ```{r setup1, include=FALSE}
 
-data_dir = '~/Desktop/alice-phase/'
-setwd('/Users/jobrenn/Documents/Projects/alice-oscillations/ana5-ptrb-replicable')
+data_dir = 'path/to/exported/data'
+setwd('path/to/analysis/directory')
 
 ```
 
