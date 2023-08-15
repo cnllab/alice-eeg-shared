@@ -1,5 +1,3 @@
-%% TODO: Update to use AUD_correct to account for trigger errors
-
 function [trl varnames missingtrials] = get_alice2_trials(dataset, triggerfile, triggers, epoch)
 
 %% function [trl varnames] = get_alice2_trials(dataset, triggerfile, triggers, epoch)
@@ -34,11 +32,6 @@ function [trl varnames missingtrials] = get_alice2_trials(dataset, triggerfile, 
 % end loop on t
 %
 
-% dataset = '/Users/jobrenn/Box Sync/raw-data/alice-eeg/S26.eeg';
-% triggerfile = 'AliceChapterOne-EEG.csv';
-% epoch = [-.3 1];
-% triggers  = {'1'}; 
-
 % get passage onset markers
 cfg = [];
 cfg.dataset = dataset;
@@ -52,7 +45,7 @@ hdr = ft_read_header(cfg.dataset); % for sampling rate
 
 po = cfg.trl(:,1); % get passage onsets
 
-% correct passage onsets for eprime lag (added 8/8/16)
+% correct passage onsets for eprime lag
 po(1)     = po(1) + 0.060 * hdr.Fs;         % 60 ms delay for passage 1
 po(2:end) = po(2:end) + 0.050 * hdr.Fs;     % 50 ms delay for passage 2:12
 
@@ -104,7 +97,7 @@ varnames = {'trigger', 'passage', 'onset', predictors.Properties.VariableNames{5
 
 fprintf('\nFound %g events matching selected triggers\n', size(trl,1));
 
-%% To replicate original analysis, re-create sentence and position values here
+%% Re-create sentence and position values here
 % Note: this is flawed for four subjects with buggy triggers: S26, S34, S35, S36
 % Because of buggy triggers, their word-order column is not monotonic
 % ... and the original code, copied below, ignored the ordering of the word
@@ -112,7 +105,6 @@ fprintf('\nFound %g events matching selected triggers\n', size(trl,1));
 % this created incorrect sentence and position information for ~20 or so
 % epochs
 % - Included here to fully recreate the original analysis
-% - Will be removed when triggers are corrected
 
 position = predictors.Position;
 sentence = predictors.Sentence;
