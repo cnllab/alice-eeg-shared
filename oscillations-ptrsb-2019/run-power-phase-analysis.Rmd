@@ -1,0 +1,717 @@
+---
+title: "Phase and Syntactic Composition"
+author: "Jonathan Brennan"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+---
+
+# Preliminaries
+
+Analysis for
+
+> Brennan, J. R., & Martin, A. E. (2019). Phase synchronization varies systematically with linguistic structure composition. Philosophical Transactions of the Royal Society B, 375. https://doi.org/10.1098/rstb.2019.0305
+
+Originally run June 2019. Last tested August 2023 with 
+R 4.2.0
+brms_2.17.0 
+emmeans_1.7.4 
+bayestestR_0.13.1 
+tidyverse_1.3.1
+
+**Important Note**: 
+Statistical output when the full pipeline is rerun is not numerically identical to published results. 
+Differences appear to reflect small noise in how word word onset time-steps were aligned to EEG samples (e.g. rounding differences) and API changes in some key functions (e.g. `bayestestR`).
+These differences do not appear to be consequential:
+Data values correlates with original values at $r > 0.99$.
+Statistical outputs are the same as original in terms of effect size and direction
+
+Annotations: 
+
+* CATEGORY: content words, function words
+* BIN: : one, two, three+ closing brackets
+* FREQ: delta (1-4), theta (4-8), gamma (30-50)
+
+Analyses:
+
+* **Power** at word onset
+* **Inter-trial phase coherence** at word onset
+* **Phase-to-phsae cross-frequency coupling**  at word onset
+* **Phase-to power cross-frequency coupling** at word onset
+* Compare each to **null distributions** by 
+  - rotating the bracket-count measure +100 lags and recomputing
+  - z-normalize all measures against these null distributions
+
+Data are created with `run_power_phase_export_to_R.m` in MATLAB
+
+```{r setup1, include=FALSE}
+
+data_dir = '~/Desktop/alice-phase/'
+setwd('/Users/jobrenn/Documents/Projects/alice-oscillations/ana5-ptrb-replicable')
+
+```
+
+```{r setup2, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning=FALSE)
+options(digits=3)
+library(tidyverse)
+library(knitr)
+library(gdata)
+library(ggplot2)
+library(circular)
+library(reshape2)
+library(brms)
+library(broom)
+library(emmeans)
+library(bayestestR)
+#library(loo)
+
+options(mc.cores = 4) 
+options(digits=3)
+
+my_prior <- set_prior("student_t(3, 0, 3)", class="b")
+```
+
+
+
+## Load datasets
+
+```{r load-data}
+all <- read.csv('AliceChapterOne-Nodecounts.csv')
+all <- subset(all, Trigger == 1)
+
+# Make null bracket count
+lagChange      <- 100
+nWords         <- max(all$Order, na.rm=TRUE)
+null.all       <- all
+null.all$Order <- all$Order + lagChange
+null.all$Order <- ifelse(null.all$Order > nWords, null.all$Order - nWords, null.all$Order)
+null.all$null.brackets <- null.all$cfg.bu
+
+all <- merge(all, null.all[c('Order', 'null.brackets')], by='Order')
+
+# load data
+datasets = dir(path=data_dir, pattern='*.csv')
+
+for (i in seq_along(datasets)) {
+  fname = paste(data_dir, datasets[i], sep='')
+  if (i == 1) {
+    hlb = read.csv(fname)
+  } else {
+    hlb = rbind(hlb, read.csv(fname))
+  }
+}
+
+d <- merge(hlb, all, by.x='order', by.y='Order')
+
+d$band <- factor(d$band, levels=c('delta', 'theta', 'gamma'))
+d$bracket.count = d$cfg.bu
+```
+
+## Organize bracket annotations
+
+generates Table 1 
+
+```{r make.bins}
+# make bracket BINS
+d$bracket.bins <- ifelse(d$bracket.count == 1, 'one',   0)
+d$bracket.bins <- ifelse(d$bracket.count == 2, 'two',   d$bracket.bins)
+d$bracket.bins <- ifelse(d$bracket.count > 2, 'three+', d$bracket.bins)
+d$bracket.bins <- factor(d$bracket.bins, levels=c('one', 'two', 'three+'))
+
+# make null BINS
+d$null.bins <- ifelse(d$null.brackets == 1, 'one',   0)
+d$null.bins <- ifelse(d$null.brackets == 2, 'two',   d$null.bins)
+d$null.bins <- ifelse(d$null.brackets > 2, 'three+', d$null.bins)
+d$null.bins <- factor(d$null.bins, levels=c('one', 'two', 'three+'))
+
+# set word category
+d$category <- factor(d$islexical, labels=c('functional', 'lexical'))
+
+# Summarize bin counts
+print('Brackets per bin per subject, per category')
+floor(table(d$bracket.bins, d$category) / 33 / 3)
+#print('Brackets per bin per subject')
+#floor(table(d$bracket.bins) / 33 / 3)
+
+# Remove all NA rows (residual annotation mistakes)
+orig_d <- d
+d      <- subset(orig_d, !is.na(d$category))
+d      <- subset(d, !is.na(d$bracket.bins))
+d      <- subset(d, !is.na(d$null.bins))
+1 - nrow(d) / nrow(orig_d) # 2.28% data-points removed
+
+```
+
+Save the data file that is published with the manuscript (Supplementary data file)
+
+```{r}
+d %>% 
+  select(epochOrder = order, subject, band, onsetPower=ons_pwr, onsetPhase=ons_phs, word=AUDIOTEXT, segment, wordOnset = tmin, wordFrequency=logfreq, phraseCount=bracket.count, phraseBin=bracket.bins, phraseBinNull=null.bins, wordCategory=category) %>%
+  write_csv('phase-by-bracket-data.csv')
+```
+
+## Content/Function length plots
+
+Figure 1
+
+```{r constituent.size}
+
+sub = d[!duplicated(d$order),]
+
+lex.length  = subset(sub, category=='lexical')$wordlength
+func.length = subset(sub, category=='functional')$wordlength
+word.length = sub$wordlength
+
+par(mfrow=c(1,3))
+hist(lex.length,     breaks=40, main='Content Words',    xlab='word   length (s)', bty='n')
+hist(func.length,    breaks=40, main='Function Words', xlab='word   length (s)', bty='n', ylab='')
+hist(word.length,    breaks=40, main='All Words', xlab='word   length (s)', bty='n', ylab='')
+#hist(phrase.length,  breaks=40, main='Phrases',          xlab='phrase length (s)', bty='n', ylab='')
+
+```
+
+
+# Power
+
+```{r power}
+
+d %>%
+  group_by(subject, bracket.bins, band, category) %>%
+  summarize(ons_pwr = mean(ons_pwr)) ->
+  brackets.pow
+
+d %>%
+  group_by(subject, null.bins, band, category) %>%
+  summarize(ons_pwr = mean(ons_pwr)) -> 
+  brackets.pow.null
+
+brackets.pow$ons_pwr_null <- brackets.pow.null$ons_pwr
+
+# z-score
+brackets.pow %>%
+  group_by(bracket.bins, band, category) %>%
+  mutate(ons_pwr_z = (ons_pwr - mean(ons_pwr_null)) / sd(ons_pwr_null)) ->
+  brackets.pow
+
+```
+
+## Power Plots
+
+Figure 1A
+
+```{r plot.power}
+
+brackets.pow  %>%
+  ggplot(aes(y = ons_pwr_z, x = band, col=factor(bracket.bins), fill=factor(bracket.bins))) +
+  geom_point(position = position_jitterdodge(jitter.width=0.2, dodge.width=0.7), alpha=0.4, show.legend=FALSE) +
+  geom_crossbar(col='black',stat='summary', fun.data=mean_se, width=0.5, position=position_dodge(width=0.7)) +
+  facet_wrap( ~ category, nrow=1) +
+  scale_y_continuous('z(Power)') +
+  scale_x_discrete('') +
+  scale_fill_manual(  name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  scale_colour_manual(name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  theme_minimal() +
+  theme(legend.position= c(0.5, 0.9), legend.direction='horizontal') ->
+  plot.brackets.pow
+
+plot.brackets.pow
+
+ggsave('figs/plot.brackets.pow.png', height=3, width=5)
+
+```
+
+## Power Stats
+
+```{r pow.stats.brackets.aov}
+
+aov.pow.brackets <- aov(ons_pwr_z ~ band * bracket.bins * category + 
+                            Error(subject/(band * bracket.bins * category)), 
+                          data=brackets.pow)
+tidy(aov.pow.brackets)
+
+```
+
+Fit statistical model for power
+
+```{r pow.stats.brackets.brm}
+if (!file.exists('brm.pow.brackets.rData')) {
+  brm.pow.brackets   <- brm(ons_pwr_z ~ band * bracket.bins * category + 
+                           (1 + band * bracket.bins * category | subject), 
+                         data = brackets.pow,
+                         prior = my_prior, 
+                         sample_prior = 'yes',
+                         save_all_pars = TRUE,
+                         verbose=FALSE)
+  save(file='brm.pow.brackets.rData', 
+       'brm.pow.brackets')
+} else {
+  load('brm.pow.brackets.rData')
+}
+
+```
+
+Appendix A Table 2
+
+```{r pow.stats.brackets.loo}
+## marginal means and post-hoc comparisons
+joint_tests(brm.pow.brackets)
+
+# interaction of band:bracket.bins
+brm.pow.brackets.emm <- pairs(
+  emmeans(brm.pow.brackets, ~ band * bracket.bins * category), 
+  by=c('band', 'category') 
+  )
+
+brm.pow.brackets.prior <- unupdate(brm.pow.brackets)
+brm.pow.brackets.prior.emm <- pairs(
+  emmeans(brm.pow.brackets.prior, ~ band * bracket.bins * category), 
+  by=c('band', 'category') 
+  )
+
+brm.pow.brackets.bf <- describe_posterior(
+  brm.pow.brackets.emm, bf_prior=brm.pow.brackets.prior.emm, 
+  test='bf')
+
+cbind(
+  summary(rbind(brm.pow.brackets.emm)),
+  BayesFactor=exp(brm.pow.brackets.bf$log_BF)
+)
+
+```
+
+# Phase Consistancy: Intertrial Phase Coherence (ITPC)
+
+Test for changes in phase alignment as combinatory demands change by examining **inter-trial phase clustering (ITPC)** per subject within each bin of bracket count.
+
+ITPC comes from Eq. 19.1 in Cohen (2014) book "Analyzing Neural Time-Series Data":
+
+$$ ITPC_{t,f} = \left| n^{-1} \sum\limits_{r=1}^n e^{ik} \right| $$ 
+where $k$ is a phase angle in radians and $n$ is the total number of trials
+
+```{r itpc}
+# ITPC function takes a vector of phase angles
+ITPC <- function(ph) { abs(mean(exp(1i * ph ) ) ) }
+
+# group by bins
+d %>%
+  filter(!is.na(bracket.bins)) %>%
+  group_by(subject, bracket.bins, band, category) %>%
+  summarize(ons_itpc = ITPC(as.numeric(ons_phs))) ->
+  brackets.itpc
+
+d %>%
+  filter(!is.na(null.bins)) %>%
+  filter(!is.na(category)) %>%
+  group_by(subject, null.bins, band, category) %>%
+  summarize(ons_itpc = ITPC(as.numeric(ons_phs))) ->
+  brackets.itpc.null
+
+brackets.itpc$ons_itpc_null <- brackets.itpc.null$ons_itpc
+
+# z-score
+brackets.itpc %>%
+  group_by(bracket.bins, band, category) %>%
+  mutate(ons_itpc_z = (ons_itpc - mean(ons_itpc_null)) / sd(ons_itpc_null)) ->
+  brackets.itpc
+
+```
+
+## ITPC Plots
+
+Figure 1B
+
+```{r plot.itpc}
+
+brackets.itpc  %>%
+  ggplot(aes(y = ons_itpc_z, x=band, col=factor(bracket.bins), fill=factor(bracket.bins))) +
+  geom_point(alpha=0.4, position=position_jitterdodge(jitter.width=0.2, dodge.width=0.7), show.legend=FALSE) +
+  geom_crossbar(col='black', stat='summary', fun.data=mean_se, width=0.5, position=position_dodge(width=0.7)) +
+  facet_wrap( ~ category, nrow=1) +
+  scale_y_continuous('z(ITPC)') +
+  scale_x_discrete('') +
+  scale_fill_manual(  name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  scale_colour_manual(name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  theme_minimal() +
+  theme(legend.position='none') ->
+  plot.bracket.itpc
+
+plot.bracket.itpc
+
+ggsave('figs/plot.bracket.itpc.png', height=3, width=5)
+
+```
+
+## ITPC Stats
+
+```{r itpc.stats.brackets.aov}
+aov.itpc.brackets <- aov(ons_itpc_z ~ band * bracket.bins * category + 
+                            Error(subject/(band * bracket.bins * category)),
+                         data = brackets.itpc)
+tidy(aov.itpc.brackets)
+```
+
+Fit ITPC stats
+
+```{r itpc.stats.brackets.brm}
+# must set sample_prior = 'yes' to test *point hypotheses* with hypothesis()
+
+if (!file.exists('brm.itpc.brackets.rData')) {
+  brm.itpc.brackets   <- brm(ons_itpc_z ~ band * bracket.bins * category + 
+                           (1 + band * bracket.bins * category | subject), 
+                         data = brackets.itpc,
+                         sample_prior = 'yes',
+                         save_all_pars = TRUE,
+                         prior = my_prior,
+                         verbose=FALSE)
+  save(file='brm.itpc.brackets.rData', 
+       'brm.itpc.brackets')
+} else {
+  load('brm.itpc.brackets.rData')
+}
+
+```
+Appendix A Table 3
+
+```{r itpc.stats.brackets.loo}
+## marginal means and post-hoc comparisons
+joint_tests(brm.itpc.brackets)
+
+brm.itpc.brackets.emm <- pairs(
+  emmeans(brm.itpc.brackets, ~ band * bracket.bins * category), 
+  by=c('band', 'category') )
+
+brm.itpc.brackets.prior <- unupdate(brm.itpc.brackets)
+brm.itpc.brackets.prior.emm <- pairs(
+  emmeans(brm.itpc.brackets.prior, ~ band * bracket.bins * category), 
+  by=c('band', 'category') 
+  )
+
+brm.itpc.brackets.bf <- describe_posterior(
+  brm.itpc.brackets.emm, bf_prior=brm.itpc.brackets.prior.emm, 
+  test='bf')
+
+cbind(
+  summary(rbind(brm.itpc.brackets.emm)),
+  BayesFactor=exp(brm.itpc.brackets.bf$log_BF)
+)
+
+```
+
+## Phase histograms
+
+Figure 1C
+
+```{r circular.plots}
+
+ggplot(d, aes(x=ons_phs, col=bracket.bins)) +  
+  geom_histogram(aes(y=..density..), bins=30, fill='white') +
+  coord_polar(clip='off') +
+  facet_grid(bracket.bins~category+band) +
+  scale_colour_manual(name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  scale_x_continuous('', limits=c(-pi, pi), breaks = c(0, pi), labels=c(0, expression(pi))) +
+  theme_minimal() +
+  theme(legend.position='none') 
+
+ggsave('figs/phase.histograms.png', height=3, width=5)
+
+
+```
+
+Supplemental Figure 1
+
+```{r phase.by.subj, fig.height=8, fig.width=7}
+# Single-subject phase density plots, just on functional words in the delta-band 
+
+ggplot(subset(d, category == 'functional' & band == 'delta') , aes(x=ons_phs, fill=bracket.bins)) +  
+  geom_density(alpha=0.4) +
+  facet_wrap(~subject) +
+  scale_x_continuous('', limits=c(-pi, pi), breaks = c(0, pi), labels=c(0, expression(pi))) +
+  theme_classic() +
+  theme(legend.position=c(0.75, 0.05), legend.direction='horizontal') +
+  ggtitle('Delta-band phase density plots, function words')
+
+
+ggsave('figs/phase.single.subject.png', height=8, width=7)
+# 
+
+```
+
+# Cross frequency coupling: Power-Power correlation (P-P)
+
+```{r cfc.pow.cor}
+nData    <- length(unique(d$subject)) * 3 * 3 * 2 # 3 bracket bins, 3 band.pairs, 2 categories
+fisher.z <- function(r) { 0.5 * (log(1+r) - log(1-r)) }
+
+cfc.pwr.brackets <- as_tibble(matrix(nrow=nData, ncol=6), .name_repair='minimal')  
+names(cfc.pwr.brackets) <- c('subject', 'category', 'bracket.bins', 'band.pair', 'z.r', 'null.z.r')
+
+i = 1
+for (s in unique(d$subject)) {
+  for (c in unique(d$category)) {
+    if (is.na(c)) { next }
+    for (b in unique(d$bracket.bins)) {
+      if (is.na(b)) { next }
+      f.track = c() # track lower frequency
+      for (f1 in unique(d$band)) {
+        f.track = c(f.track, f1)
+        for (f2 in unique(d$band)) { # order of band ensures f1 <= f2
+          if (f2 %in% f.track) { next }
+          first  = subset(d, subject == s & category == c & bracket.bins == b & band == f1)$ons_pwr
+          second = subset(d, subject == s & category == c & bracket.bins == b & band == f2)$ons_pwr
+          cfc.pwr.brackets$z.r[i]           <- fisher.z(cor(first, second))
+          
+          first  = subset(d, subject == s & category == c & null.bins == b & band == f1)$ons_pwr
+          second = subset(d, subject == s & category == c & null.bins == b & band == f2)$ons_pwr
+          cfc.pwr.brackets$null.z.r[i]      <- fisher.z(cor(first, second))
+          
+          cfc.pwr.brackets$subject[i]       <- s
+          cfc.pwr.brackets$category[i]      <- c
+          cfc.pwr.brackets$bracket.bins[i]  <- b
+          cfc.pwr.brackets$band.pair[i]     <- paste(f1, f2, sep='.')
+          i <- i + 1
+        }
+      }
+    }
+  }
+}
+
+cfc.pwr.brackets$bracket.bins <- factor(cfc.pwr.brackets$bracket.bins, levels=c('one', 'two', 'three+'))
+
+# add z-score against null values
+cfc.pwr.brackets %>%
+  group_by(category, bracket.bins, band.pair) %>%
+  mutate(z.z.r = (z.r - mean(null.z.r)) / sd(null.z.r)) ->
+  cfc.pwr.brackets
+
+```
+
+## P-P Plots
+
+Figure 1D
+
+```{r plot.cfc.pow}
+
+cfc.pwr.brackets  %>%
+  ggplot(aes(y = z.z.r, x=band.pair, col=factor(bracket.bins), fill=factor(bracket.bins))) +
+  geom_point(alpha=0.4, position=position_jitterdodge(jitter.width=0.2, dodge.width=0.7), show.legend=FALSE) +
+  geom_crossbar(col='black', stat='summary', fun.data=mean_se, width=0.5, position=position_dodge(width=0.7)) +
+  facet_wrap( ~ category, nrow=1) +
+  scale_y_continuous('z(r), power') +
+  scale_x_discrete('') +
+  scale_fill_manual(  name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  scale_colour_manual(name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  theme_minimal() +
+  theme(legend.position= 'none') ->
+  plot.cfc.pwr.bra
+
+plot.cfc.pwr.bra
+
+ggsave('figs/plot.cfc.pwr.bra.png', height=3, width=5)
+
+```
+
+## P-P Stats
+
+```{r cfc.pow.cor.brackets.stat.aov}
+
+aov.cfc.pwr.bracket <-  aov(z.z.r ~ band.pair * bracket.bins * category + 
+                               Error(subject / (band.pair * bracket.bins * category)), 
+                         data = cfc.pwr.brackets)
+
+tidy(aov.cfc.pwr.bracket)
+```
+
+Fit P-P stats
+
+```{r cfc.pow.cor.brackets.stat.brm}
+
+if (!file.exists('brm.cfc.pwr.bracket.rData')) {
+  brm.cfc.pwr.brackets  <- brm(z.z.r ~ band.pair * bracket.bins * category + 
+                           (1 + band.pair * bracket.bins * category | subject), 
+                         data = cfc.pwr.brackets,
+                         sample_prior = 'yes',
+                         save_all_pars = TRUE,
+                         prior = my_prior, 
+                         verbose=FALSE)
+  save(file='brm.cfc.pwr.bracket.rData', 'brm.cfc.pwr.brackets')
+} else {
+  load('brm.cfc.pwr.bracket.rData')
+}
+
+```
+
+Appendix A Table 4
+
+```{r cfc.pow.cor.brackets.stat.loo}
+## marginal means and post-hoc comparisons
+joint_tests(brm.cfc.pwr.brackets)
+
+brm.cfc.pwr.brackets.emm <- pairs(
+  emmeans(brm.cfc.pwr.brackets, ~ band.pair * bracket.bins * category), 
+  by=c('band.pair', 'category') )
+
+brm.cfc.pwr.brackets.prior <- unupdate(brm.cfc.pwr.brackets)
+brm.cfc.pwr.brackets.prior.emm <- pairs(
+  emmeans(brm.cfc.pwr.brackets.prior, ~ band.pair * bracket.bins * category), 
+  by=c('band.pair', 'category') 
+  )
+
+brm.cfc.pwr.brackets.bf <- describe_posterior(
+  brm.cfc.pwr.brackets.emm, bf_prior=brm.cfc.pwr.brackets.prior.emm, 
+  test='bf')
+
+cbind(
+  summary(rbind(brm.cfc.pwr.brackets.emm)),
+  BayesFactor=exp(brm.cfc.pwr.brackets.bf$log_BF)
+)
+
+
+```
+
+# Cross-frequency coupling: Phase-amplitude coupling (PAC)
+
+From Cohen 2014 ch. 30 p. 413:
+
+$$PAC = \left| n^{-1} \sum\limits_{t=1}^n a_te^{i\phi_t} \right|$$
+
+Where $t$ is the time-point (here, onset), $a$ is power at the higher frequency, $\phi$ is the phase angle (radians) of the lower frequency and $n$ is the total number of time-points.
+
+Following Cohen, use raw power, not transformed, so PAC is positive and test with a non-parametric statistic (shift the phase/amplitude time indices to create null distribution)
+
+```{r cfc.pac}
+# exp(1) gives e
+# pw is power at the *higher frequency*, ph is phase at the *lower frequency*
+pac <- function(pw, ph) { abs(mean(pw * exp(1)^(1i * ph) ) ) }
+
+brackets.pac <- as_tibble(matrix(nrow=nData, ncol=6))
+names(brackets.pac) <- c('subject', 'category', 'bracket.bins', 'band.pair', 'pac', 'null.pac')
+i = 1
+for (s in unique(d$subject)) { # for each subject, each BIN, and each unique band.pair...
+  for (c in unique(d$category)) {
+    if (is.na(c)) { next }
+    for (b in unique(d$bracket.bins)) {
+      if (is.na(b)) { next }
+      track.f = c() # keep track of lower frequencies
+      for (f1 in unique(d$band)) {
+        track.f = c(track.f, f1)
+        for (f2 in unique(d$band)) { # factor order ensures f1 <= f2
+          if (f2 %in% track.f) { next }
+          # ... get vector PH of phases from the lower frequency
+          ph <- subset(d, subject == s & bracket.bins == b & band == f1 & category == c)$ons_phs
+          # ... get vector PW of powers from the higher frequency
+          pw <- subset(d, subject == s & bracket.bins == b & band == f2 & category == c)$ons_pwr
+          # ... return pac(P,H)
+          brackets.pac[i,'pac']          <- pac(pw, as.numeric(ph))
+
+          # get null effects
+          ph <- subset(d, subject == s & null.bins == b & band == f1 & category == c)$ons_phs
+          pw <- subset(d, subject == s & null.bins == b & band == f2 & category == c)$ons_pwr
+          brackets.pac[i,'null.pac']     <- pac(pw, as.numeric(ph))
+          brackets.pac[i,'subject']      <- s
+          brackets.pac[i,'category']     <- c
+          brackets.pac[i,'bracket.bins'] <- b
+          brackets.pac[i,'band.pair']    <- paste(f1, f2, sep='.')
+          i = i + 1
+        }
+      }
+    }
+  }
+}
+
+brackets.pac$bracket.bins <- factor(brackets.pac$bracket.bins, levels=c('one', 'two', 'three+'))
+
+# add z-score against null values
+brackets.pac %>%
+  group_by(category, bracket.bins, band.pair) %>%
+  mutate(pac_z = (pac - mean(null.pac)) / sd(null.pac)) ->
+  brackets.pac
+
+
+```
+
+## PAC Plots
+
+Figure 2E
+
+```{r plot.cfc.pac}
+
+brackets.pac  %>%
+  ggplot(aes(y = pac_z, x = band.pair, col=factor(bracket.bins), fill=factor(bracket.bins))) +
+  geom_point(alpha=0.4, position=position_jitterdodge(jitter.width=0.2, dodge.width=0.7)) +
+  geom_crossbar(col='black', stat='summary', fun.data=mean_se, width=0.5, position=position_dodge(width=0.7)) +
+  facet_wrap( ~ category, nrow=1) +
+  scale_y_continuous('z(PAC)') +
+  scale_x_discrete('') +
+  scale_fill_manual(  name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  scale_colour_manual(name='Brackets: ', values=c('#d53e4f', '#f46d43', '#fdae61')) +
+  theme_minimal() +
+  theme(legend.position= 'none') ->
+  plot.pac.brackets
+
+plot.pac.brackets
+
+ggsave('figs/plot.bracket.pac.png', height=3, width=5)
+
+```
+
+## PAC Stats
+
+```{r cfc.pac.brackets.stat}
+
+aov.pac.brackets <- aov(pac_z ~ bracket.bins * band.pair * category + 
+                          Error(subject/(bracket.bins * band.pair * category)), 
+                       data=brackets.pac)
+tidy(aov.pac.brackets)
+```
+
+Fit PAC stats
+
+```{r cfc.pac.brackets.stat.brm}
+
+if (!file.exists('brm.pac.brackets.rData')) {
+  brm.pac.brackets  <- brm(pac_z ~ band.pair * bracket.bins * category + 
+                           (1 + band.pair * bracket.bins * category | subject), 
+                         data = brackets.pac,
+                         sample_prior = 'yes',
+                         save_all_pars = TRUE,
+                         prior = my_prior,
+                         verbose=FALSE)
+  save(file='brm.pac.brackets.rData', 
+       'brm.pac.brackets')
+} else {
+  load('brm.pac.brackets.rData')
+}
+
+```
+
+
+Appendix A Table 5
+
+```{r cfc.pac.brackets.stat.loo}
+joint_tests(brm.pac.brackets)
+
+brm.pac.brackets.emm <- pairs(
+  emmeans(brm.pac.brackets, ~ band.pair * bracket.bins * category), 
+  by=c('band.pair', 'category') )
+
+brm.pac.brackets.prior <- unupdate(brm.pac.brackets)
+brm.pac.brackets.prior.emm <- pairs(
+  emmeans(brm.pac.brackets.prior, ~ band.pair * bracket.bins * category), 
+  by=c('band.pair', 'category') 
+  )
+
+brm.pac.brackets.bf <- describe_posterior(
+  brm.pac.brackets.emm, bf_prior=brm.pac.brackets.prior.emm, 
+  test='bf')
+
+cbind(
+  summary(rbind(brm.pac.brackets.emm)),
+  BayesFactor=exp(brm.pac.brackets.bf$log_BF)
+)
+
+
+```
+
+
