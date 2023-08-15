@@ -55,12 +55,14 @@ Analysis testing the effect of training data genre and amount on the fit between
 
 [How to run](training-emnlp-2019/README.md)
 
-### Phil Trans Royal Soc B (2020)
+#### Phil Trans Royal Soc B (2020)
+
+Analysis testing for effects of syntactic composition on phase synchrony in the delta, theta, and gamma bands.
 
 > Brennan, J. R., & Martin, A. E. (2019). Phase synchronization varies systematically with linguistic structure composition. Philosophical Transactions of the Royal Society B, 375. <https://doi.org/10.1098/rstb.2019.0305>
 
-to be added
+[How to run](oscillations-ptrsb-2019/README.md)
 
 ### Contact
 
-Please direct questions and comments to Jonathan Brennan: <jobrenn@umich.edu>
+Please direct questions and comments to Jonathan R. Brennan: <jobrenn@umich.edu>
