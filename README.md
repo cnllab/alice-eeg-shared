@@ -8,7 +8,7 @@ Raw data files are available at <https://doi.org/10.7302/Z29C6VNH>
 
 1. Download the data (`S01.eeg` `S01.vhdr` `S01.vmrk` etc.) and place into a local directory
 2. Download prePROCessing parameters (`proc.zip`) and unzip into a local directory
-3. install fieldtrip for MATLAB (<https://www.fieldtriptoolbox.org>)
+3. Install fieldtrip for MATLAB (<https://www.fieldtriptoolbox.org>)
 
 ### Data Collection
 
@@ -39,7 +39,7 @@ Analysis testing effects of structure on EEG signatures of predictabilty predict
 
 [How to run](surprisal-plosone-2019/README.md)
 
-#### Proc ACL (published 2018)
+#### `rnng-acl-2018`
 
 Analysis testing the effect of syntactic representations on EEG signals using Recurrent Neural Network Grammars
 
@@ -47,7 +47,7 @@ Analysis testing the effect of syntactic representations on EEG signals using Re
 
 [How to run](rnng-acl-2018/README.md)
 
-#### EMNLP 2019
+#### `training-emnlp-2019`
 
 Analysis testing the effect of training data genre and amount on the fit between RNNG estimates of predictability and EEG signals
 
@@ -55,7 +55,7 @@ Analysis testing the effect of training data genre and amount on the fit between
 
 [How to run](training-emnlp-2019/README.md)
 
-#### Phil Trans Royal Soc B (2020)
+#### `oscillations-ptrsb-2019`
 
 Analysis testing for effects of syntactic composition on phase synchrony in the delta, theta, and gamma bands.
 
