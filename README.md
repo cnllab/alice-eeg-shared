@@ -4,7 +4,7 @@ Preprocessing and analyses for EEG data collected while participants listened to
 
 ### Getting started
 
-Raw data files are available at <https://doi.org/10.7302/Z29C6VNH>
+Raw data files are available at <https://doi.org/10.7302/746w-g237>
 
 1. Download the data (`S01.eeg` `S01.vhdr` `S01.vmrk` etc.) and place into a local directory
 2. Download prePROCessing parameters (`proc.zip`) and unzip into a local directory
